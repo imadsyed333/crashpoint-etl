@@ -1,0 +1,18 @@
+services:
+  airflow:
+    image: apache/airflow:2.8.1
+    container_name: airflow
+    restart: always
+    environment:
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - _PIP_ADDITIONAL_REQUIREMENTS=pandas geopandas scikit-learn rapidfuzz shapely pyproj
+      - PYTHONPATH=/opt/airflow
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./data:/opt/airflow/data
+      - ./src:/opt/airflow/src
+      - ./scripts:/opt/airflow/scripts
+    ports:
+      - "8080:8080"
+    command: bash /opt/airflow/scripts/init_airflow.sh
+    user: "${AIRFLOW_UID}:0"

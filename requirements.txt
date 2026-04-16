@@ -1,0 +1,6 @@
+pandas
+geopandas
+scikit-learn
+rapidfuzz
+shapely
+pyproj
