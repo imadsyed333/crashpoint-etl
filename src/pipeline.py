@@ -2,7 +2,7 @@ import geopandas as gpd
 import pandas as pd
 from shapely.geometry import shape
 import json
-from rapidfuzz import process, fuzz
+from rapidfuzz import fuzz
 
 address_pattern = r'^\d{1,5}\w?\s{0,2}\w+\s?\w+$'
 
