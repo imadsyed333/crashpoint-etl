@@ -3,13 +3,12 @@
 airflow db init
 
 airflow users create \
-    --username admin \
+    --username $AIRFLOW_USERNAME \
     --firstname Admin \
     --lastname User \
     --role Admin \
     --email admin@example.com \
-    --password admin || true
-
+    --password $AIRFLOW_PASSWORD
 exec airflow scheduler &
 
 exec airflow webserver
