@@ -6,6 +6,8 @@ services:
     environment:
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
       - _PIP_ADDITIONAL_REQUIREMENTS=pandas geopandas rapidfuzz shapely pyproj
+      - AIRFLOW_USERNAME=${AIRFLOW_USERNAME}
+      - AIRFLOW_PASSWORD=${AIRFLOW_PASSWORD}
       - PYTHONPATH=/opt/airflow
     volumes:
       - ./dags:/opt/airflow/dags
