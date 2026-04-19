@@ -2,6 +2,8 @@
 
 This project provides a geocoding pipeline for processing and analyzing collision and address data using Apache Airflow and Python. It is designed to automate the extraction, transformation, and geocoding of raw address and collision datasets, producing processed outputs for further analysis.
 
+Rough work for developing this pipeline can be found [here](https://github.com/imadsyed333/geocrash).
+
 ## Project Structure
 
 - `dags/` — Contains Airflow DAGs (workflows), e.g., `geocode_pipeline.py`.
