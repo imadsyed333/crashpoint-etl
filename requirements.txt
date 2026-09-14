@@ -3,3 +3,7 @@ geopandas
 rapidfuzz
 shapely
 pyproj
+pyarrow
+sqlalchemy
+geoalchemy2
+psycopg2-binary
