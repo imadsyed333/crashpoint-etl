@@ -3,8 +3,10 @@ import os
 from pathlib import Path
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
-from rapidfuzz import fuzz
+import shapely
+from rapidfuzz import fuzz, process
 from shapely.geometry import shape
 
 address_pattern = r'^\d{1,5}\w?\s{0,2}\w+\s?\w+$'
@@ -92,6 +94,43 @@ def split_collisions():
     address_collisions.to_parquet(processed_file("address_collisions.parquet"), index=False)
 
 
+def match_by_similarity(collisions, features, *, strip_slash=False):
+    collisions = collisions.reset_index(drop=True)
+    features = features.reset_index(drop=True)
+
+    location_description = (collisions["stname1"].fillna("") + " " + collisions["stname2"].fillna("")).str.lower()
+    choices = features["description"].fillna("").str.lower()
+    if strip_slash:
+        choices = choices.str.replace("/", "", regex=False)
+
+    queries = location_description.to_numpy()
+    choices_arr = choices.to_numpy()
+    unique_queries, inverse = np.unique(queries, return_inverse=True)
+
+    unique_best_idx = np.empty(len(unique_queries), dtype=np.intp)
+    unique_best_score = np.empty(len(unique_queries), dtype=np.float32)
+    # ponytail: cap cdist matrix at ~128MB float32; raise if runners have more RAM
+    batch = max(1, min(len(unique_queries), 32_000_000 // max(len(choices_arr), 1)))
+    choices_list = choices_arr.tolist()
+    for start in range(0, len(unique_queries), batch):
+        chunk = unique_queries[start:start + batch].tolist()
+        scores = process.cdist(chunk, choices_list, scorer=fuzz.token_set_ratio, dtype=np.float32, workers=-1)
+        unique_best_idx[start:start + batch] = scores.argmax(axis=1)
+        unique_best_score[start:start + batch] = scores.max(axis=1)
+
+    best_idx = unique_best_idx[inverse]
+    matched = features.iloc[best_idx].reset_index(drop=True)
+
+    out = collisions.copy()
+    out["location_description"] = location_description.to_numpy()
+    out["feature_id"] = matched["feature_id"].to_numpy()
+    out["description"] = choices_arr[best_idx]
+    out["type"] = matched["type"].to_numpy()
+    out["similarity_score"] = unique_best_score[inverse]
+    out["distance"] = shapely.distance(out.geometry.values, matched.geometry.values)
+    return out
+
+
 def geocode_collisions():
     intersection_collisions = gpd.read_parquet(processed_file("intersection_collisions.parquet"))
     address_collisions = gpd.read_parquet(processed_file("address_collisions.parquet"))
@@ -99,31 +138,9 @@ def geocode_collisions():
     intersections = gpd.read_parquet(processed_file("intersections.parquet"))
     addresses = gpd.read_parquet(processed_file("addresses.parquet"))
 
-    geocoded_intersection_collisions = gpd.sjoin_nearest(intersection_collisions, intersections, how="left", distance_col="distance")
-
-    geocoded_address_collisions = gpd.sjoin_nearest(address_collisions, addresses, how="left", distance_col="distance")
-
-    geocoded_intersection_collisions.to_parquet(processed_file("geocoded_intersection_collisions.parquet"), index=False)
-    geocoded_address_collisions.to_parquet(processed_file("geocoded_address_collisions.parquet"), index=False)
-
-
-def compute_similarity():
-    geocoded_intersection_collisions = gpd.read_parquet(processed_file("geocoded_intersection_collisions.parquet"))
-    geocoded_address_collisions = gpd.read_parquet(processed_file("geocoded_address_collisions.parquet"))
-
-    geocoded_intersection_collisions['location_description'] = (geocoded_intersection_collisions['stname1'] + " " + geocoded_intersection_collisions['stname2']).str.lower()
-
-    geocoded_intersection_collisions['description'] = geocoded_intersection_collisions['description'].str.lower().str.replace("/", "")
-
-    geocoded_address_collisions['stname2'] = geocoded_address_collisions['stname2'].fillna("")
-
-    geocoded_address_collisions['location_description'] = (geocoded_address_collisions['stname1'] + " " + geocoded_address_collisions['stname2']).str.lower()
-
-    geocoded_address_collisions['description'] = geocoded_address_collisions['description'].str.lower()
-
-    geocoded_intersection_collisions['similarity_score'] = [fuzz.token_set_ratio(loc_desc, desc) for loc_desc, desc in zip(geocoded_intersection_collisions['location_description'], geocoded_intersection_collisions['description'])]
-
-    geocoded_address_collisions['similarity_score'] = [fuzz.token_set_ratio(loc_desc, desc) for loc_desc, desc in zip(geocoded_address_collisions['location_description'], geocoded_address_collisions['description'])]
+    geocoded_intersection_collisions = match_by_similarity(intersection_collisions, intersections, strip_slash=True)
+    geocoded_address_collisions = match_by_similarity(address_collisions, addresses)
+    geocoded_address_collisions["stname2"] = geocoded_address_collisions["stname2"].fillna("")
 
     geocoded_intersection_collisions.to_parquet(processed_file("final_geocoded_intersection_collisions.parquet"), index=False)
     geocoded_address_collisions.to_parquet(processed_file("final_geocoded_address_collisions.parquet"), index=False)

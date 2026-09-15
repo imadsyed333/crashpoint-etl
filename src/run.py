@@ -9,7 +9,6 @@ from sqlalchemy import create_engine
 
 from src.pipeline import (
     DATA_DIR,
-    compute_similarity,
     geocode_collisions,
     load_addresses,
     load_collisions,
@@ -75,7 +74,6 @@ def main():
     load_addresses()
     split_collisions()
     geocode_collisions()
-    compute_similarity()
     load_to_postgis()
     shutil.rmtree(DATA_DIR / "processed", ignore_errors=True)
 
