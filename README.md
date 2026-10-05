@@ -42,4 +42,4 @@ Docker Compose still starts a local Airflow UI if you want to trigger the DAG by
 docker compose up --build
 ```
 
-Open [http://localhost:8080](http://localhost:8080) and trigger `geocode_pipeline`. Raw CSVs must already be in `data/raw/` for that path (`collisions.csv`, `addresses.csv`, `intersections.csv`).
+Open [http://localhost:8080](http://localhost:8080) and trigger `geocode_pipeline`. The `download` task fetches the three Open Data dumps into `data/raw/` before the load tasks run.

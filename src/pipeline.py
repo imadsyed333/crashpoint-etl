@@ -1,5 +1,6 @@
 import json
 import os
+import urllib.request
 from pathlib import Path
 
 import geopandas as gpd
@@ -12,6 +13,41 @@ from shapely.geometry import shape
 address_pattern = r'^\d{1,5}\w?\s{0,2}\w+\s?\w+$'
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).resolve().parents[1] / "data"))
+
+CKAN = "https://ckan0.cf.opendata.inter.prod-toronto.ca/api/3/action"
+DUMP_BASE = "https://ckan0.cf.opendata.inter.prod-toronto.ca/datastore/dump"
+PACKAGES = {
+    "collisions.csv": "motor-vehicle-collisions-involving-killed-or-seriously-injured-persons",
+    "addresses.csv": "address-points-municipal-toronto-one-address-repository",
+    "intersections.csv": "intersection-file-city-of-toronto",
+}
+
+
+def datastore_dump_url(package_id):
+    req = urllib.request.Request(
+        f"{CKAN}/package_show?id={package_id}",
+        headers={"User-Agent": "crashpoint-etl"},
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        resources = json.load(resp)["result"]["resources"]
+    for res in resources:
+        url = res.get("url") or ""
+        if "/datastore/dump/" in url:
+            return url
+    for res in resources:
+        if res.get("datastore_active"):
+            return f"{DUMP_BASE}/{res['id']}"
+    raise RuntimeError(f"No datastore dump for {package_id}")
+
+
+def download():
+    raw = DATA_DIR / "raw"
+    raw.mkdir(parents=True, exist_ok=True)
+    for filename, package_id in PACKAGES.items():
+        dest = raw / filename
+        url = datastore_dump_url(package_id)
+        print(f"Downloading {package_id} -> {dest}")
+        urllib.request.urlretrieve(url, dest)
 
 
 def raw_file(name):

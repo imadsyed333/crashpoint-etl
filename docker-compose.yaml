@@ -16,5 +16,13 @@ services:
       - ./scripts:/opt/airflow/scripts
     ports:
       - "8080:8080"
-    command: bash /opt/airflow/scripts/init_airflow.sh
-    user: "${AIRFLOW_UID}:0"
+    # ponytail: Docker creates this bind mount as nobody:0755, so chmod 777 is what
+    # actually lets AIRFLOW_UID write. Upgrade path: chown ${AIRFLOW_UID}:0 and 2775
+    # once the engine shares this distro's user namespace.
+    user: "0:0"
+    entrypoint: ["/usr/bin/dumb-init", "--", "bash", "-c"]
+    command:
+      - |
+        mkdir -p /opt/airflow/data/raw /opt/airflow/data/processed
+        chmod 777 /opt/airflow/data /opt/airflow/data/raw /opt/airflow/data/processed
+        exec gosu "${AIRFLOW_UID:-50000}:0" /entrypoint bash /opt/airflow/scripts/init_airflow.sh
