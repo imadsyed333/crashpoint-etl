@@ -28,6 +28,12 @@ python -m src.run
 
 `python -m src.run` fetches the three Open Data dumps, runs the pipeline, and loads PostGIS. No manual CSV download.
 
+Map of `geocoded_collisions` (same `DATABASE_URL` the ETL writes):
+
+```sh
+streamlit run src/dashboard.py
+```
+
 Smoke check (no database, no CKAN):
 
 ```sh

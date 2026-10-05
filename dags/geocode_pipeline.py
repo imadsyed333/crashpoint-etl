@@ -2,6 +2,7 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 
 from src.pipeline import download, load_collisions, load_intersections, load_addresses, split_collisions, geocode_collisions
+from src.run import load_to_postgis
 
 with DAG(
     'geocode_pipeline',
@@ -40,4 +41,9 @@ with DAG(
         python_callable=geocode_collisions,
     )
 
-    download_task >> [load_collisions_task, load_intersections_task, load_addresses_task] >> split_collisions_task >> geocode_collisions_task
+    load_to_postgis_task = PythonOperator(
+        task_id='load_to_postgis',
+        python_callable=load_to_postgis,
+    )
+
+    download_task >> [load_collisions_task, load_intersections_task, load_addresses_task] >> split_collisions_task >> geocode_collisions_task >> load_to_postgis_task

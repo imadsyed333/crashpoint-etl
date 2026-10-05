@@ -77,6 +77,10 @@ def main():
     assert intersections["similarity_score"].iloc[0] >= 80
     assert addresses["distance"].iloc[0] > 100
     assert intersections["distance"].iloc[0] > 100
+    assert abs(addresses["match_latitude"].iloc[0] - FAR_LAT) < 1e-5
+    assert abs(addresses["match_longitude"].iloc[0] - FAR_LON) < 1e-5
+    assert abs(intersections["match_latitude"].iloc[0] - FAR_LAT) < 1e-5
+    assert abs(intersections["match_longitude"].iloc[0] - FAR_LON) < 1e-5
     print("ok")
 
 

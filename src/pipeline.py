@@ -164,6 +164,9 @@ def match_by_similarity(collisions, features, *, strip_slash=False):
     out["type"] = matched["type"].to_numpy()
     out["similarity_score"] = unique_best_score[inverse]
     out["distance"] = shapely.distance(out.geometry.values, matched.geometry.values)
+    match_ll = gpd.GeoSeries(matched.geometry.to_numpy(), crs=features.crs).to_crs(4326)
+    out["match_latitude"] = match_ll.y.to_numpy()
+    out["match_longitude"] = match_ll.x.to_numpy()
     return out
 
 
