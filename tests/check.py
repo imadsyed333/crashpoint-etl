@@ -12,7 +12,7 @@ os.environ["DATA_DIR"] = tempfile.mkdtemp()
 
 import pandas as pd  # noqa: E402
 
-from src.dashboard import apply_filters  # noqa: E402
+from src.dashboard import apply_filters, picked_row  # noqa: E402
 from src.pipeline import (  # noqa: E402
     DATA_DIR,
     address_pattern,
@@ -75,19 +75,27 @@ def check_filters():
             "similarity_score": 40.0, "distance": 500.0,
         },
     ])
-    assert list(apply_filters(rows, "all", 0, 500, "")["collision_id"]) == [10, 11]
-    assert list(apply_filters(rows, "all", 0, 500, "10")["collision_id"]) == [10]
-    assert list(apply_filters(rows, "all", 0, 500, "spadina")["collision_id"]) == [10]
-    assert list(apply_filters(rows, "all", 0, 500, "123 MAIN")["collision_id"]) == [11]
-    assert list(apply_filters(rows, "intersection", 0, 500, "")["collision_id"]) == [10]
-    assert list(apply_filters(rows, "all", 80, 500, "")["collision_id"]) == [10]
-    assert list(apply_filters(rows, "all", 0, 100, "")["collision_id"]) == [10]
-    assert apply_filters(rows, "all", 0, 500, "(").empty
+    assert list(apply_filters(rows, "all", 0, 0, "")["collision_id"]) == [10, 11]
+    assert list(apply_filters(rows, "all", 0, 0, "10")["collision_id"]) == [10]
+    assert list(apply_filters(rows, "all", 0, 0, "spadina")["collision_id"]) == [10]
+    assert list(apply_filters(rows, "all", 0, 0, "123 MAIN")["collision_id"]) == [11]
+    assert list(apply_filters(rows, "intersection", 0, 0, "")["collision_id"]) == [10]
+    assert list(apply_filters(rows, "all", 80, 0, "")["collision_id"]) == [10]
+    assert list(apply_filters(rows, "all", 0, 100, "")["collision_id"]) == [11]
+    assert apply_filters(rows, "all", 0, 0, "(").empty
+
+
+def check_picked_row():
+    row = {"stname1": "Queen", "stname2": "Spadina"}
+    assert picked_row({"objects": {"collision": [row]}}) is row
+    assert picked_row({"objects": {"link": [], "collision": [row]}}) is row
+    assert picked_row({"objects": {}}) is None
 
 
 def main():
     check_address_pattern()
     check_filters()
+    check_picked_row()
     write_csvs()
     load_collisions()
     load_intersections()

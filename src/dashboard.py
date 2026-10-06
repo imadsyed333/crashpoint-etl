@@ -1,3 +1,4 @@
+import html
 import math
 import os
 import socket
@@ -27,11 +28,11 @@ def engine_url(database_url):
     return url
 
 
-def apply_filters(collisions, kind, min_score, max_distance, query):
+def apply_filters(collisions, kind, min_score, min_distance, query):
     view = collisions
     if kind != "all":
         view = view[view["type"] == kind]
-    view = view[(view["similarity_score"] >= min_score) & (view["distance"] <= max_distance)]
+    view = view[(view["similarity_score"] >= min_score) & (view["distance"] >= min_distance)]
     query = query.strip()
     if query:
         text = (
@@ -53,6 +54,29 @@ def map_zoom(view):
     )
     # ponytail: log2(900/span) fits the span on an ~800px map; ignores widget width. Clamp 10–16.
     return min(16, max(10, math.log2(900 / span)))
+
+
+def picked_row(selection):
+    for rows in selection.get("objects", {}).values():
+        if rows:
+            return rows[0]
+    return None
+
+
+def popup_html(row):
+    def field(key):
+        value = row.get(key)
+        return html.escape("" if value is None else str(value))
+
+    return (
+        '<div class="crash-popup">'
+        f"<b>{field('stname1')} {field('stname2')}</b><br/>"
+        f"Match: {field('description')}<br/>"
+        f"Type: {field('type')}<br/>"
+        f"Similarity: {field('similarity_score')}<br/>"
+        f"Distance: {field('distance')} m"
+        "</div>"
+    )
 
 
 @st.cache_data(show_spinner="Loading collisions")
@@ -81,9 +105,9 @@ def main():
     kind = st.sidebar.selectbox("Match type", ["all", "intersection", "address"])
     min_score = st.sidebar.slider("Minimum similarity", 0, 100, 0)
     dmax = float(collisions["distance"].max())
-    max_distance = st.sidebar.slider("Maximum distance (m)", 0.0, dmax, dmax) if dmax > 0 else dmax
+    min_distance = st.sidebar.slider("Minimum distance (m)", 0.0, dmax, 0.0) if dmax > 0 else 0.0
     query = st.sidebar.text_input("Search collision, intersection, or address")
-    view = apply_filters(collisions, kind, min_score, max_distance, query)
+    view = apply_filters(collisions, kind, min_score, min_distance, query)
 
     st.sidebar.caption(f"{len(view):,} collisions")
 
@@ -102,6 +126,31 @@ def main():
             pointer-events: none;
             z-index: 2;
         }
+        .st-key-map {
+            position: relative;
+        }
+        /* ponytail: corner-anchored. Selection returns the row, not a screen point,
+           so the card cannot sit on the clicked coordinate. Upgrade path: a custom deck widget. */
+        .st-key-map [data-testid="stElementContainer"]:has(.crash-popup) {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            z-index: 5;
+            width: max-content;
+            max-width: min(360px, 80%);
+            height: auto;
+            margin: 0;
+            pointer-events: none;
+        }
+        .crash-popup {
+            pointer-events: auto;
+            background: #29323c;
+            color: #a0a7b4;
+            padding: 10px;
+            border-radius: 4px;
+            line-height: 1.4;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -116,6 +165,7 @@ def main():
             pdk.Layer(
                 "LineLayer",
                 view,
+                id="link",
                 get_source_position=["longitude", "latitude"],
                 get_target_position=["match_longitude", "match_latitude"],
                 get_color=[40, 160, 60],
@@ -125,6 +175,7 @@ def main():
             pdk.Layer(
                 "ScatterplotLayer",
                 view,
+                id="collision",
                 get_position=["longitude", "latitude"],
                 get_fill_color=[200, 40, 40],
                 get_radius=40,
@@ -133,6 +184,7 @@ def main():
             pdk.Layer(
                 "ScatterplotLayer",
                 view,
+                id="match",
                 get_position=["match_longitude", "match_latitude"],
                 get_fill_color=[30, 90, 200],
                 get_radius=30,
@@ -149,8 +201,21 @@ def main():
             ),
         },
     )
-    st.pydeck_chart(deck, width="stretch", height=600)
+    with st.container(key="map"):
+        event = st.pydeck_chart(
+            deck,
+            width="stretch",
+            height=600,
+            on_select="rerun",
+            selection_mode="single-object",
+            key="collisions-map",
+        )
+        picked = picked_row(event.selection)
+        if picked:
+            st.markdown(popup_html(picked), unsafe_allow_html=True)
     st.caption("Red is the collision. Blue is the matched intersection or address.")
+    st.caption("Similarity score versus match distance (m).")
+    st.scatter_chart(view, x="distance", y="similarity_score", color="type", height=320)
     st.dataframe(view, hide_index=True, width="stretch")
 
 
