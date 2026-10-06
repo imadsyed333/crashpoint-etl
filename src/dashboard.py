@@ -3,11 +3,17 @@ import math
 import os
 import socket
 
+import altair as alt
 import pandas as pd
 import pydeck as pdk
 import streamlit as st
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
+
+SCORE_EDGES = list(range(0, 100, 10)) + [100.01]
+SCORE_LABELS = [f"{lo}–{lo + 10}" for lo in range(0, 100, 10)]
+DISTANCE_EDGES = list(range(0, 1100, 100)) + [float("inf")]
+DISTANCE_LABELS = [f"{lo}–{lo + 100}" for lo in range(0, 1000, 100)] + [">1000"]
 
 COLUMNS = [
     "collision_id", "stname1", "stname2", "stname3",
@@ -46,6 +52,39 @@ def apply_filters(collisions, kind, min_score, min_distance, query):
     return view
 
 
+def bucket_counts(view, column, edges, labels):
+    out = view[[column, "type"]].copy()
+    # right=False so a boundary opens the next bucket; the last edge keeps the top value inside.
+    out["bucket"] = pd.cut(out[column], edges, labels=labels, right=False, include_lowest=True)
+    return (
+        out.groupby(["bucket", "type"], observed=False)
+        .size()
+        .rename("collisions")
+        .reset_index()
+    )
+
+
+def bucket_labels(counts):
+    totals = counts.groupby("type")["collisions"].transform("sum")
+    share = (100 * counts["collisions"] / totals.replace(0, pd.NA)).fillna(0)
+    text = share.map(lambda pct: f"{pct:.1f}".rstrip("0").rstrip(".") + "%")
+    return text.where(counts["collisions"] > 0, "")
+
+
+def histogram(counts, title, labels):
+    counts = counts.copy()
+    counts["label"] = bucket_labels(counts)
+    top = max(float(counts["collisions"].max()), 1) * 1.18
+    base = alt.Chart(counts).encode(
+        x=alt.X("bucket:N", title=title, sort=labels),
+        y=alt.Y("collisions:Q", title="Collisions", scale=alt.Scale(domain=[0, top])),
+        xOffset="type:N",
+    )
+    bars = base.mark_bar().encode(color=alt.Color("type:N", title="Match type"))
+    text = base.mark_text(dy=-4, baseline="bottom").encode(text="label:N", color=alt.Color("type:N", legend=None))
+    return (bars + text).properties(height=320)
+
+
 def map_zoom(view):
     span = max(
         float(view["latitude"].max() - view["latitude"].min()),
@@ -71,6 +110,7 @@ def popup_html(row):
     return (
         '<div class="crash-popup">'
         f"<b>{field('stname1')} {field('stname2')}</b><br/>"
+        f"Collision: {field('collision_id')}<br/>"
         f"Match: {field('description')}<br/>"
         f"Type: {field('type')}<br/>"
         f"Similarity: {field('similarity_score')}<br/>"
@@ -194,6 +234,7 @@ def main():
         tooltip={
             "html": (
                 "<b>{stname1} {stname2}</b><br/>"
+                "Collision: {collision_id}<br/>"
                 "Match: {description}<br/>"
                 "Type: {type}<br/>"
                 "Similarity: {similarity_score}<br/>"
@@ -214,8 +255,17 @@ def main():
         if picked:
             st.markdown(popup_html(picked), unsafe_allow_html=True)
     st.caption("Red is the collision. Blue is the matched intersection or address.")
-    st.caption("Similarity score versus match distance (m).")
-    st.scatter_chart(view, x="distance", y="similarity_score", color="type", height=320)
+    st.caption("Collisions in each 10-point similarity bucket. The label is that bar's share of its match type.")
+    st.altair_chart(
+        histogram(bucket_counts(view, "similarity_score", SCORE_EDGES, SCORE_LABELS), "Similarity score", SCORE_LABELS),
+        width="stretch",
+    )
+    st.caption("Collisions in each 100 m distance bucket. Distances above 1000 m are in >1000. The label is that bar's share of its match type.")
+    st.altair_chart(
+        histogram(bucket_counts(view, "distance", DISTANCE_EDGES, DISTANCE_LABELS), "Distance (m)", DISTANCE_LABELS),
+        width="stretch",
+    )
+
     st.dataframe(view, hide_index=True, width="stretch")
 
 

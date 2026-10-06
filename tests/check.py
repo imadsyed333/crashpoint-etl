@@ -12,7 +12,17 @@ os.environ["DATA_DIR"] = tempfile.mkdtemp()
 
 import pandas as pd  # noqa: E402
 
-from src.dashboard import apply_filters, picked_row  # noqa: E402
+from src.dashboard import (  # noqa: E402
+    DISTANCE_EDGES,
+    DISTANCE_LABELS,
+    SCORE_EDGES,
+    SCORE_LABELS,
+    apply_filters,
+    bucket_counts,
+    bucket_labels,
+    histogram,
+    picked_row,
+)
 from src.pipeline import (  # noqa: E402
     DATA_DIR,
     address_pattern,
@@ -85,6 +95,38 @@ def check_filters():
     assert apply_filters(rows, "all", 0, 0, "(").empty
 
 
+def count_at(frame, bucket, kind):
+    hit = frame[(frame["bucket"].astype(str) == bucket) & (frame["type"] == kind)]
+    assert len(hit) == 1, f"missing {kind} {bucket}"
+    return hit.iloc[0]
+
+
+def check_match_charts():
+    rows = pd.DataFrame({
+        "similarity_score": [49, 50, 100, 0],
+        "distance": [0.0, 100.0, 1000.0, 5000.0],
+        "type": ["intersection", "address", "intersection", "address"],
+    })
+    scores = bucket_counts(rows, "similarity_score", SCORE_EDGES, SCORE_LABELS)
+    scores["label"] = bucket_labels(scores)
+    assert count_at(scores, "40–50", "intersection")["collisions"] == 1
+    assert count_at(scores, "40–50", "intersection")["label"] == "50%"
+    assert count_at(scores, "50–60", "address")["collisions"] == 1
+    assert count_at(scores, "90–100", "intersection")["collisions"] == 1
+    assert count_at(scores, "0–10", "address")["collisions"] == 1
+    assert count_at(scores, "0–10", "address")["label"] == "50%"
+    assert count_at(scores, "0–10", "intersection")["collisions"] == 0
+    assert count_at(scores, "0–10", "intersection")["label"] == ""
+    spec = histogram(scores, "Similarity score", SCORE_LABELS).to_dict()
+    assert spec["layer"][1]["mark"]["type"] == "text"
+    distances = bucket_counts(rows, "distance", DISTANCE_EDGES, DISTANCE_LABELS)
+    assert count_at(distances, "0–100", "intersection")["collisions"] == 1
+    assert count_at(distances, "100–200", "address")["collisions"] == 1
+    assert count_at(distances, "900–1000", "intersection")["collisions"] == 0
+    assert count_at(distances, ">1000", "intersection")["collisions"] == 1
+    assert count_at(distances, ">1000", "address")["collisions"] == 1
+
+
 def check_picked_row():
     row = {"stname1": "Queen", "stname2": "Spadina"}
     assert picked_row({"objects": {"collision": [row]}}) is row
@@ -95,6 +137,7 @@ def check_picked_row():
 def main():
     check_address_pattern()
     check_filters()
+    check_match_charts()
     check_picked_row()
     write_csvs()
     load_collisions()
