@@ -133,6 +133,41 @@ def split_collisions():
     address_collisions.to_parquet(processed_file("address_collisions.parquet"), index=False)
 
 
+def _top_k(scores, k):
+    if k == scores.shape[1]:
+        order = np.argsort(-scores, axis=1)
+        return order, np.take_along_axis(scores, order, axis=1)
+    part = np.argpartition(scores, -k, axis=1)[:, -k:]
+    part_scores = np.take_along_axis(scores, part, axis=1)
+    order = np.argsort(-part_scores, axis=1)
+    return np.take_along_axis(part, order, axis=1), np.take_along_axis(part_scores, order, axis=1)
+
+
+def _containment_top(unique_queries, choices_arr, k):
+    postings = {}
+    for i, text in enumerate(choices_arr):
+        for tok in set(text.split()):
+            postings.setdefault(tok, []).append(i)
+    n = len(choices_arr)
+    top_idx = np.zeros((len(unique_queries), k), dtype=np.intp)
+    top_score = np.zeros((len(unique_queries), k), dtype=np.float32)
+    for qi, query in enumerate(unique_queries):
+        tokens = set(query.split())
+        if not tokens:
+            continue
+        counts = np.zeros(n, dtype=np.int16)
+        for tok in tokens:
+            idx = postings.get(tok)
+            if idx:
+                counts[idx] += 1
+        if counts.max() == 0:
+            continue
+        picked, picked_scores = _top_k(counts.astype(np.float32)[None, :] / len(tokens), k)
+        top_idx[qi] = picked[0]
+        top_score[qi] = picked_scores[0]
+    return top_idx, top_score
+
+
 def match_by_similarity(collisions, features, *, strip_slash=False):
     collisions = collisions.reset_index(drop=True)
     features = features.reset_index(drop=True)
@@ -146,30 +181,44 @@ def match_by_similarity(collisions, features, *, strip_slash=False):
     choices_arr = choices.to_numpy()
     unique_queries, inverse = np.unique(queries, return_inverse=True)
 
-    unique_best_idx = np.empty(len(unique_queries), dtype=np.intp)
-    unique_best_score = np.empty(len(unique_queries), dtype=np.float32)
-    ties = {}
+    k = min(5, len(choices_arr))
+    top_idx = np.empty((len(unique_queries), k), dtype=np.intp)
+    top_score = np.empty((len(unique_queries), k), dtype=np.float32)
     # ponytail: cap cdist matrix at ~128MB float32; raise if runners have more RAM
     batch = max(1, min(len(unique_queries), 32_000_000 // max(len(choices_arr), 1)))
     choices_list = choices_arr.tolist()
     for start in range(0, len(unique_queries), batch):
         chunk = unique_queries[start:start + batch].tolist()
         scores = process.cdist(chunk, choices_list, scorer=fuzz.token_sort_ratio, dtype=np.float32, workers=-1)
-        max_score = scores.max(axis=1)
-        unique_best_idx[start:start + batch] = scores.argmax(axis=1)
-        unique_best_score[start:start + batch] = max_score
-        n_at_max = (scores == max_score[:, None]).sum(axis=1)
-        for i in np.flatnonzero(n_at_max > 1):
-            ties[start + i] = np.flatnonzero(scores[i] == max_score[i])
+        top_idx[start:start + batch], top_score[start:start + batch] = _top_k(scores, k)
 
-    best_idx = unique_best_idx[inverse]
-    if ties:
-        feat_geoms = features.geometry.to_numpy()
-        col_geoms = collisions.geometry.to_numpy()
-        for q, tied in ties.items():
-            rows = np.flatnonzero(inverse == q)
-            dist = shapely.distance(col_geoms[rows, None], feat_geoms[tied][None, :])
-            best_idx[rows] = tied[dist.argmin(axis=1)]
+    rows = np.arange(len(collisions))
+    feat_geoms = features.geometry.to_numpy()
+    points = collisions.geometry.to_numpy()
+
+    cand_idx = top_idx[inverse]
+    cand_score = top_score[inverse]
+    dist = shapely.distance(points[:, None], feat_geoms[cand_idx])
+    winner = dist.argmin(axis=1)
+    sort_best = cand_idx[rows, winner]
+    sort_dist = dist[rows, winner]
+
+    cont_idx, cont_score = _containment_top(unique_queries, choices_arr, k)
+    cont_cand = cont_idx[inverse]
+    cont_scores = cont_score[inverse]
+    cont_dist = shapely.distance(points[:, None], feat_geoms[cont_cand])
+    # zeros are ties, not matches; drop them so they can't win on distance
+    cont_dist = np.where(cont_scores > 0, cont_dist, np.inf)
+    cont_win = cont_dist.argmin(axis=1)
+    cont_best = cont_cand[rows, cont_win]
+    cont_best_dist = cont_dist[rows, cont_win]
+
+    use_cont = cont_best_dist < sort_dist
+    best_idx = np.where(use_cont, cont_best, sort_best)
+    similarity = cand_score[rows, winner].copy()
+    for i in np.flatnonzero(use_cont):
+        similarity[i] = fuzz.token_sort_ratio(queries[i], choices_arr[best_idx[i]])
+
     matched = features.iloc[best_idx].reset_index(drop=True)
 
     out = collisions.copy()
@@ -177,7 +226,7 @@ def match_by_similarity(collisions, features, *, strip_slash=False):
     out["feature_id"] = matched["feature_id"].to_numpy()
     out["description"] = choices_arr[best_idx]
     out["type"] = matched["type"].to_numpy()
-    out["similarity_score"] = unique_best_score[inverse]
+    out["similarity_score"] = similarity
     out["distance"] = shapely.distance(out.geometry.values, matched.geometry.values)
     match_ll = gpd.GeoSeries(matched.geometry.to_numpy(), crs=features.crs).to_crs(4326)
     out["match_latitude"] = match_ll.y.to_numpy()

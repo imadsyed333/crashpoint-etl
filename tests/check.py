@@ -37,9 +37,13 @@ from src.pipeline import (  # noqa: E402
 )
 
 LON, LAT = -79.38, 43.65
+MID_LON = -79.375
 FAR_LON, FAR_LAT = -79.37, 43.65
+FARTHER_LON = -79.30
 NEAR_POINT = json.dumps({"type": "Point", "coordinates": [LON, LAT]})
+MID_POINT = json.dumps({"type": "Point", "coordinates": [MID_LON, LAT]})
 FAR_POINT = json.dumps({"type": "Point", "coordinates": [FAR_LON, FAR_LAT]})
+FARTHER_POINT = json.dumps({"type": "Point", "coordinates": [FARTHER_LON, LAT]})
 
 
 def write_csvs():
@@ -56,12 +60,20 @@ def write_csvs():
         [
             {"ADDRESS_POINT_ID": 99, "ADDRESS_FULL": "1 King", "geometry": NEAR_POINT},
             {"ADDRESS_POINT_ID": 10, "ADDRESS_FULL": "123 Main", "geometry": FAR_POINT},
+            {"ADDRESS_POINT_ID": 11, "ADDRESS_FULL": "123 Maine", "geometry": MID_POINT},
+            {"ADDRESS_POINT_ID": 12, "ADDRESS_FULL": "12 Main", "geometry": FARTHER_POINT},
+            {"ADDRESS_POINT_ID": 13, "ADDRESS_FULL": "123 Main St", "geometry": FARTHER_POINT},
+            {"ADDRESS_POINT_ID": 14, "ADDRESS_FULL": "123 King", "geometry": FARTHER_POINT},
         ]
     ).to_csv(raw_file("addresses.csv"), index=False)
     pd.DataFrame(
         [
             {"INTERSECTION_ID": 99, "INTERSECTION_DESC": "King / Yonge", "geometry": NEAR_POINT},
             {"INTERSECTION_ID": 20, "INTERSECTION_DESC": "Queen / Spadina", "geometry": FAR_POINT},
+            {"INTERSECTION_ID": 21, "INTERSECTION_DESC": "Queen / Spadina Ave", "geometry": MID_POINT},
+            {"INTERSECTION_ID": 22, "INTERSECTION_DESC": "Spadina / Queen", "geometry": FARTHER_POINT},
+            {"INTERSECTION_ID": 23, "INTERSECTION_DESC": "Queen Spadina Rd", "geometry": FARTHER_POINT},
+            {"INTERSECTION_ID": 24, "INTERSECTION_DESC": "Yonge / Queen", "geometry": FARTHER_POINT},
         ]
     ).to_csv(raw_file("intersections.csv"), index=False)
 
@@ -154,6 +166,44 @@ def check_similarity_tie():
     assert (out["similarity_score"] == 100).all()
 
 
+def check_containment_superset():
+    import geopandas as gpd
+    from rapidfuzz import fuzz
+
+    collisions = gpd.GeoDataFrame(
+        {"collision_id": [1], "stname1": ["Bayview Ave"], "stname2": ["Pottery Rd"]},
+        geometry=gpd.points_from_xy([LON], [LAT]),
+        crs=4326,
+    ).to_crs(32617)
+    features = gpd.GeoDataFrame(
+        {
+            "feature_id": [7, 1, 2, 3, 4, 5],
+            "description": [
+                "Bayview Ave / Pottery Rd / Bayview Multi-Use Trail",
+                "Bayview Ave / Pottery Rd",
+                "Bayview Ave / Post Rd",
+                "Bayview Ave / Kilgour Rd",
+                "Bayview Ave / C P R",
+                "Bayview Ave / Third St",
+            ],
+            "type": "intersection",
+        },
+        geometry=gpd.points_from_xy(
+            [LON, FAR_LON, FARTHER_LON, FARTHER_LON, MID_LON, FARTHER_LON],
+            [LAT, FAR_LAT, LAT, LAT, LAT, LAT],
+        ),
+        crs=4326,
+    ).to_crs(32617)
+    out = match_by_similarity(collisions, features, strip_slash=True)
+    assert out["feature_id"].iloc[0] == 7
+    assert out["distance"].iloc[0] < 1
+    score = fuzz.token_sort_ratio(
+        "bayview ave pottery rd",
+        "bayview ave  pottery rd  bayview multi-use trail",
+    )
+    assert abs(float(out["similarity_score"].iloc[0]) - score) < 0.1
+
+
 def check_picked_row():
     row = {"stname1": "Queen", "stname2": "Spadina"}
     assert picked_row({"objects": {"collision": [row]}}) is row
@@ -166,6 +216,7 @@ def main():
     check_filters()
     check_match_charts()
     check_similarity_tie()
+    check_containment_superset()
     check_picked_row()
     write_csvs()
     load_collisions()
@@ -182,18 +233,18 @@ def main():
     addresses = gpd.read_parquet(processed_file("final_geocoded_address_collisions.parquet"))
     intersections = gpd.read_parquet(processed_file("final_geocoded_intersection_collisions.parquet"))
     assert len(addresses) == 1 and len(intersections) == 1
-    assert addresses["feature_id"].iloc[0] == 10
-    assert intersections["feature_id"].iloc[0] == 20
+    assert addresses["feature_id"].iloc[0] == 11
+    assert intersections["feature_id"].iloc[0] == 21
     assert addresses["similarity_score"].notna().all()
     assert intersections["similarity_score"].notna().all()
-    assert addresses["similarity_score"].iloc[0] >= 80
-    assert intersections["similarity_score"].iloc[0] >= 80
+    assert 80 <= addresses["similarity_score"].iloc[0] < 100
+    assert 80 <= intersections["similarity_score"].iloc[0] < 100
     assert addresses["distance"].iloc[0] > 100
     assert intersections["distance"].iloc[0] > 100
-    assert abs(addresses["match_latitude"].iloc[0] - FAR_LAT) < 1e-5
-    assert abs(addresses["match_longitude"].iloc[0] - FAR_LON) < 1e-5
-    assert abs(intersections["match_latitude"].iloc[0] - FAR_LAT) < 1e-5
-    assert abs(intersections["match_longitude"].iloc[0] - FAR_LON) < 1e-5
+    assert abs(addresses["match_latitude"].iloc[0] - LAT) < 1e-5
+    assert abs(addresses["match_longitude"].iloc[0] - MID_LON) < 1e-5
+    assert abs(intersections["match_latitude"].iloc[0] - LAT) < 1e-5
+    assert abs(intersections["match_longitude"].iloc[0] - MID_LON) < 1e-5
     print("ok")
 
 
