@@ -30,6 +30,7 @@ from src.pipeline import (  # noqa: E402
     load_addresses,
     load_collisions,
     load_intersections,
+    match_by_similarity,
     processed_file,
     raw_file,
     split_collisions,
@@ -127,6 +128,32 @@ def check_match_charts():
     assert count_at(distances, ">1000", "address")["collisions"] == 1
 
 
+def check_similarity_tie():
+    import geopandas as gpd
+
+    collisions = gpd.GeoDataFrame(
+        {
+            "collision_id": [1, 2],
+            "stname1": ["Queen", "Queen"],
+            "stname2": ["Spadina", "Spadina"],
+        },
+        geometry=gpd.points_from_xy([FAR_LON, LON], [FAR_LAT, LAT]),
+        crs=4326,
+    ).to_crs(32617)
+    features = gpd.GeoDataFrame(
+        {
+            "feature_id": [1, 2],
+            "description": ["Spadina / Queen", "Queen / Spadina"],
+            "type": ["intersection", "intersection"],
+        },
+        geometry=gpd.points_from_xy([FAR_LON, LON], [FAR_LAT, LAT]),
+        crs=4326,
+    ).to_crs(32617)
+    out = match_by_similarity(collisions, features, strip_slash=True)
+    assert list(out["feature_id"]) == [1, 2]
+    assert (out["similarity_score"] == 100).all()
+
+
 def check_picked_row():
     row = {"stname1": "Queen", "stname2": "Spadina"}
     assert picked_row({"objects": {"collision": [row]}}) is row
@@ -138,6 +165,7 @@ def main():
     check_address_pattern()
     check_filters()
     check_match_charts()
+    check_similarity_tie()
     check_picked_row()
     write_csvs()
     load_collisions()

@@ -148,16 +148,28 @@ def match_by_similarity(collisions, features, *, strip_slash=False):
 
     unique_best_idx = np.empty(len(unique_queries), dtype=np.intp)
     unique_best_score = np.empty(len(unique_queries), dtype=np.float32)
+    ties = {}
     # ponytail: cap cdist matrix at ~128MB float32; raise if runners have more RAM
     batch = max(1, min(len(unique_queries), 32_000_000 // max(len(choices_arr), 1)))
     choices_list = choices_arr.tolist()
     for start in range(0, len(unique_queries), batch):
         chunk = unique_queries[start:start + batch].tolist()
         scores = process.cdist(chunk, choices_list, scorer=fuzz.token_sort_ratio, dtype=np.float32, workers=-1)
+        max_score = scores.max(axis=1)
         unique_best_idx[start:start + batch] = scores.argmax(axis=1)
-        unique_best_score[start:start + batch] = scores.max(axis=1)
+        unique_best_score[start:start + batch] = max_score
+        n_at_max = (scores == max_score[:, None]).sum(axis=1)
+        for i in np.flatnonzero(n_at_max > 1):
+            ties[start + i] = np.flatnonzero(scores[i] == max_score[i])
 
     best_idx = unique_best_idx[inverse]
+    if ties:
+        feat_geoms = features.geometry.to_numpy()
+        col_geoms = collisions.geometry.to_numpy()
+        for q, tied in ties.items():
+            rows = np.flatnonzero(inverse == q)
+            dist = shapely.distance(col_geoms[rows, None], feat_geoms[tied][None, :])
+            best_idx[rows] = tied[dist.argmin(axis=1)]
     matched = features.iloc[best_idx].reset_index(drop=True)
 
     out = collisions.copy()
