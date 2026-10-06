@@ -12,8 +12,10 @@ os.environ["DATA_DIR"] = tempfile.mkdtemp()
 
 import pandas as pd  # noqa: E402
 
+from src.dashboard import apply_filters  # noqa: E402
 from src.pipeline import (  # noqa: E402
     DATA_DIR,
+    address_pattern,
     geocode_collisions,
     load_addresses,
     load_collisions,
@@ -53,7 +55,39 @@ def write_csvs():
     ).to_csv(raw_file("intersections.csv"), index=False)
 
 
+def check_address_pattern():
+    matched = pd.Series(["1755 LAKE SHORE BLVD W", "123 Main"]).str.match(address_pattern, case=False)
+    assert matched.all()
+    unmatched = pd.Series(["27 HWY N", "401 Hwy", "Queen"]).str.match(address_pattern, case=False)
+    assert not unmatched.any()
+
+
+def check_filters():
+    rows = pd.DataFrame([
+        {
+            "collision_id": 10, "stname1": "Queen", "stname2": "Spadina", "stname3": "",
+            "description": "queen / spadina", "type": "intersection",
+            "similarity_score": 90.0, "distance": 20.0,
+        },
+        {
+            "collision_id": 11, "stname1": "123 Main", "stname2": "", "stname3": "",
+            "description": "123 main st", "type": "address",
+            "similarity_score": 40.0, "distance": 500.0,
+        },
+    ])
+    assert list(apply_filters(rows, "all", 0, 500, "")["collision_id"]) == [10, 11]
+    assert list(apply_filters(rows, "all", 0, 500, "10")["collision_id"]) == [10]
+    assert list(apply_filters(rows, "all", 0, 500, "spadina")["collision_id"]) == [10]
+    assert list(apply_filters(rows, "all", 0, 500, "123 MAIN")["collision_id"]) == [11]
+    assert list(apply_filters(rows, "intersection", 0, 500, "")["collision_id"]) == [10]
+    assert list(apply_filters(rows, "all", 80, 500, "")["collision_id"]) == [10]
+    assert list(apply_filters(rows, "all", 0, 100, "")["collision_id"]) == [10]
+    assert apply_filters(rows, "all", 0, 500, "(").empty
+
+
 def main():
+    check_address_pattern()
+    check_filters()
     write_csvs()
     load_collisions()
     load_intersections()

@@ -1,3 +1,4 @@
+import math
 import os
 import socket
 
@@ -26,6 +27,34 @@ def engine_url(database_url):
     return url
 
 
+def apply_filters(collisions, kind, min_score, max_distance, query):
+    view = collisions
+    if kind != "all":
+        view = view[view["type"] == kind]
+    view = view[(view["similarity_score"] >= min_score) & (view["distance"] <= max_distance)]
+    query = query.strip()
+    if query:
+        text = (
+            view["collision_id"].astype(str) + " "
+            + view["stname1"].fillna("") + " "
+            + view["stname2"].fillna("") + " "
+            + view["stname3"].fillna("") + " "
+            + view["description"].fillna("")
+        ).str.lower()
+        view = view[text.str.contains(query.lower(), regex=False)]
+    return view
+
+
+def map_zoom(view):
+    span = max(
+        float(view["latitude"].max() - view["latitude"].min()),
+        float(view["longitude"].max() - view["longitude"].min()),
+        1e-4,
+    )
+    # ponytail: log2(900/span) fits the span on an ~800px map; ignores widget width. Clamp 10–16.
+    return min(16, max(10, math.log2(900 / span)))
+
+
 @st.cache_data(show_spinner="Loading collisions")
 def load_collisions(database_url):
     cols = ", ".join(COLUMNS)
@@ -51,10 +80,10 @@ def main():
 
     kind = st.sidebar.selectbox("Match type", ["all", "intersection", "address"])
     min_score = st.sidebar.slider("Minimum similarity", 0, 100, 0)
-    view = collisions
-    if kind != "all":
-        view = view[view["type"] == kind]
-    view = view[view["similarity_score"] >= min_score]
+    dmax = float(collisions["distance"].max())
+    max_distance = st.sidebar.slider("Maximum distance (m)", 0.0, dmax, dmax) if dmax > 0 else dmax
+    query = st.sidebar.text_input("Search collision, intersection, or address")
+    view = apply_filters(collisions, kind, min_score, max_distance, query)
 
     st.sidebar.caption(f"{len(view):,} collisions")
 
@@ -62,11 +91,26 @@ def main():
         st.info("No collisions match these filters.")
         return
 
+    # ponytail: deck.gl parks .deck-widgets-root as an unsized sibling of the canvas,
+    # so the hover popup is shifted by that gap and clipped. Pin the root to the map.
+    st.markdown(
+        """
+        <style>
+        .deck-widgets-root {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 2;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     deck = pdk.Deck(
         initial_view_state=pdk.ViewState(
             latitude=view["latitude"].mean(),
             longitude=view["longitude"].mean(),
-            zoom=11,
+            zoom=map_zoom(view),
         ),
         layers=[
             pdk.Layer(
@@ -74,7 +118,7 @@ def main():
                 view,
                 get_source_position=["longitude", "latitude"],
                 get_target_position=["match_longitude", "match_latitude"],
-                get_color=[140, 140, 140],
+                get_color=[40, 160, 60],
                 get_width=2,
                 pickable=True,
             ),
@@ -110,4 +154,5 @@ def main():
     st.dataframe(view, hide_index=True, width="stretch")
 
 
-main()
+if __name__ == "__main__":
+    main()

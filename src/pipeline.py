@@ -10,7 +10,10 @@ import shapely
 from rapidfuzz import fuzz, process
 from shapely.geometry import shape
 
-address_pattern = r'^\d{1,5}\w?\s{0,2}\w+\s?\w+$'
+address_pattern = (
+    r"^(?!.*\b(?:hwy|highway|ramp|expy|expressway|xwy|gardiner)\b)"
+    r"\d{1,5}[a-z]?(?:\s+[a-z0-9'./()-]+){1,6}$"
+)
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).resolve().parents[1] / "data"))
 
@@ -122,7 +125,7 @@ def load_addresses():
 def split_collisions():
     collisions = gpd.read_parquet(processed_file("collisions.parquet"))
 
-    address_collisions = collisions[collisions['stname1'].str.match(address_pattern, na=False) | collisions['stname2'].str.match(address_pattern, na=False)]
+    address_collisions = collisions[collisions['stname1'].str.match(address_pattern, case=False, na=False) | collisions['stname2'].str.match(address_pattern, case=False, na=False)]
 
     intersection_collisions = collisions[~collisions['collision_id'].isin(address_collisions['collision_id'])]
 
@@ -150,7 +153,7 @@ def match_by_similarity(collisions, features, *, strip_slash=False):
     choices_list = choices_arr.tolist()
     for start in range(0, len(unique_queries), batch):
         chunk = unique_queries[start:start + batch].tolist()
-        scores = process.cdist(chunk, choices_list, scorer=fuzz.token_set_ratio, dtype=np.float32, workers=-1)
+        scores = process.cdist(chunk, choices_list, scorer=fuzz.token_sort_ratio, dtype=np.float32, workers=-1)
         unique_best_idx[start:start + batch] = scores.argmax(axis=1)
         unique_best_score[start:start + batch] = scores.max(axis=1)
 
